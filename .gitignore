@@ -1,5 +1,7 @@
 .env
 .env.example
+data/cache/
+data/processed/
 __pycache__/
 *.py[cod]
 .DS_Store

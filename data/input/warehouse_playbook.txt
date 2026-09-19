@@ -1,0 +1,3 @@
+Synthetic logistics learning document.
+If a refrigerated shipment loses power, move it to validated cold storage and notify the Area Manager.
+If a receiving appointment is unavailable, confirm capacity before dispatch.

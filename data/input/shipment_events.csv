@@ -1,0 +1,3 @@
+shipment_id,product_type,weather,action
+SYN-1001,chilled seafood,heat_wave,move to powered cold storage
+SYN-1002,consumer electronics,clear,continue standard routing
