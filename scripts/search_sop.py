@@ -16,6 +16,7 @@ MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 def build_vector_store() -> PineconeVectorStore:
+    """Build a LangChain store using the same local model as ingestion."""
     load_dotenv(ROOT / ".env")
     embeddings = HuggingFaceEmbeddings(
         model_name=MODEL_NAME,
@@ -31,6 +32,7 @@ def build_vector_store() -> PineconeVectorStore:
 
 
 def main() -> int:
+    """Search the SOP with a user-provided natural-language question."""
     parser = argparse.ArgumentParser(description="Search the logistics SOP.")
     parser.add_argument("question", help="Natural-language SOP question.")
     parser.add_argument("-k", type=int, default=3, help="Number of results.")

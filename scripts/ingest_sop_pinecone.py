@@ -26,6 +26,7 @@ DEFAULT_RETRY_BACKOFF_SECONDS = 2
 
 
 def split_sop(text: str) -> list[dict[str, str]]:
+    """Split Markdown SOP sections into overlapping embedding chunks."""
     sections = re.split(r"(?=^#{1,3} )", text, flags=re.MULTILINE)
     chunks: list[dict[str, str]] = []
 
@@ -66,6 +67,7 @@ def split_sop(text: str) -> list[dict[str, str]]:
 
 
 def wait_until_ready(index, attempts: int = 30) -> None:
+    """Wait until Pinecone accepts index-stat requests."""
     for attempt in range(1, attempts + 1):
         try:
             index.describe_index_stats()
@@ -77,6 +79,7 @@ def wait_until_ready(index, attempts: int = 30) -> None:
 
 
 def file_hash(path: Path) -> str:
+    """Calculate a streaming SHA-256 hash for a source document."""
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
@@ -85,6 +88,7 @@ def file_hash(path: Path) -> str:
 
 
 def load_manifest(path: Path) -> dict:
+    """Load the ingestion manifest, treating malformed state as empty."""
     if not path.exists():
         return {}
     try:
@@ -94,11 +98,13 @@ def load_manifest(path: Path) -> dict:
 
 
 def save_manifest(path: Path, manifest: dict) -> None:
+    """Persist successful ingestion metadata to the ignored cache directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def retry_batch_operation(operation, description: str, max_retries: int, backoff: int):
+    """Retry a batch operation with exponential backoff before re-raising."""
     for attempt in range(1, max_retries + 2):
         try:
             return operation()
@@ -114,6 +120,7 @@ def retry_batch_operation(operation, description: str, max_retries: int, backoff
 
 
 def main() -> None:
+    """Incrementally embed, upsert, and reconcile the indexed SOP chunks."""
     policy_path = PROJECT_ROOT / "data/policy/Cold_Chain_Incident_SOP_v2.md"
     if not policy_path.is_file():
         raise FileNotFoundError(f"SOP not found: {policy_path}")

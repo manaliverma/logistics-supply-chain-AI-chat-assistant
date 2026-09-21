@@ -23,11 +23,13 @@ class DocumentParser(ABC):
 
     @abstractmethod
     def parse(self, path: Path) -> tuple[str, dict[str, Any]]:
+        """Extract normalized text and format metadata from one source file."""
         """Return normalized text and structured metadata."""
 
 
 class TextParser(DocumentParser):
     def parse(self, path: Path) -> tuple[str, dict[str, Any]]:
+        """Read text or Markdown using common encodings with fallback."""
         for encoding in ("utf-8-sig", "utf-16", "cp1252"):
             try:
                 text = path.read_text(encoding=encoding)
@@ -41,6 +43,7 @@ class TextParser(DocumentParser):
 
 class CsvParser(DocumentParser):
     def parse(self, path: Path) -> tuple[str, dict[str, Any]]:
+        """Convert CSV rows into normalized line-oriented document text."""
         with path.open("r", encoding="utf-8-sig", newline="") as source:
             rows = list(csv.DictReader(source))
         if not rows:
@@ -54,6 +57,7 @@ class CsvParser(DocumentParser):
 
 class SpreadsheetParser(DocumentParser):
     def parse(self, path: Path) -> tuple[str, dict[str, Any]]:
+        """Extract worksheet names and cell values from an Excel workbook."""
         workbook = pd.ExcelFile(path)
         sheets: dict[str, list[dict[str, Any]]] = {}
         text_parts: list[str] = []
@@ -83,6 +87,7 @@ class SpreadsheetParser(DocumentParser):
 
 class PdfParser(DocumentParser):
     def parse(self, path: Path) -> tuple[str, dict[str, Any]]:
+        """Extract text and page metadata from a PDF document."""
         reader = PdfReader(str(path))
         pages = [
             {"page": number, "text": page.extract_text() or ""}
@@ -107,6 +112,7 @@ PARSERS: dict[str, DocumentParser] = {
 
 
 def sha256_file(path: Path) -> str:
+    """Calculate a streaming SHA-256 hash for a source file."""
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
@@ -115,6 +121,7 @@ def sha256_file(path: Path) -> str:
 
 
 def json_value(value: Any) -> Any:
+    """Convert parser metadata into values safe to serialize as JSON."""
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if pd.isna(value):
@@ -123,6 +130,7 @@ def json_value(value: Any) -> Any:
 
 
 def extract_text(path: Path) -> tuple[str, dict[str, Any]]:
+    """Select the parser for a supported extension and extract its content."""
     parser = PARSERS.get(path.suffix.lower())
     if parser is None:
         raise ValueError(f"Unsupported file type: {path.suffix}")
@@ -130,6 +138,7 @@ def extract_text(path: Path) -> tuple[str, dict[str, Any]]:
 
 
 def cache_file(source: Path, input_root: Path, cache_root: Path) -> Path:
+    """Write or reuse the hash-addressed JSON cache for one source file."""
     content_hash = sha256_file(source)
     output = cache_root / f"{content_hash}.json"
     if output.exists():
@@ -160,6 +169,7 @@ def cache_file(source: Path, input_root: Path, cache_root: Path) -> Path:
 
 
 def clean_empty_cache(cache_root: Path) -> int:
+    """Remove empty or invalid cached JSON files and return the count removed."""
     removed = 0
     if not cache_root.exists():
         return removed
@@ -176,6 +186,7 @@ def clean_empty_cache(cache_root: Path) -> int:
 
 
 def main() -> int:
+    """Cache all supported input documents under the configured output path."""
     parser = argparse.ArgumentParser(
         description="Cache text extracted from supported documents."
     )

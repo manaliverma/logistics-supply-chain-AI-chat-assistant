@@ -31,6 +31,7 @@ LEGACY_MAPPING = {
 
 
 def setting(*names: str, default: str | None = None) -> str:
+    """Return the first configured environment value from the supplied names."""
     for name in names:
         value = os.getenv(name)
         if value:
@@ -41,6 +42,7 @@ def setting(*names: str, default: str | None = None) -> str:
 
 
 def build_engine():
+    """Create the administrator SQLAlchemy engine used for initial loading."""
     host = setting("SQL_SERVER_HOST", "MSSQL_HOST", default="127.0.0.1")
     port = setting("SQL_SERVER_PORT", "MSSQL_PORT", default="1433")
     user = setting("SQL_ADMIN_USER", "MSSQL_USER", default="sa")
@@ -58,6 +60,7 @@ def build_engine():
 
 
 def wait_for_sql_server(engine, attempts: int = 30) -> None:
+    """Poll SQL Server until it accepts a simple connectivity query."""
     for attempt in range(1, attempts + 1):
         try:
             with engine.connect() as connection:
@@ -70,6 +73,7 @@ def wait_for_sql_server(engine, attempts: int = 30) -> None:
 
 
 def main() -> int:
+    """Map and load the raw CSV fields into the legacy SQL table."""
     data_path = PROJECT_ROOT / setting(
         "DATA_FILE",
         default="data/raw/dynamic_supply_chain_logistics_dataset.csv",

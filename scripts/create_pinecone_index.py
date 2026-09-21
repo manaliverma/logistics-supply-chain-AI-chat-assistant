@@ -9,6 +9,7 @@ from pinecone import Pinecone, ServerlessSpec
 
 
 def main() -> None:
+    """Create the configured 384-dimensional cosine Pinecone index if absent."""
     load_dotenv(".env")
     client = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
     index_name = os.getenv("PINECONE_INDEX_NAME", "logistics-policy")

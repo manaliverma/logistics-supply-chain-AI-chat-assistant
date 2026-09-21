@@ -12,6 +12,7 @@ OUTPUT = ROOT / "data/input"
 
 
 def create_pdf(path: Path) -> None:
+    """Write a minimal text PDF used to exercise the PDF parser."""
     """Create a small text PDF without requiring an external PDF generator."""
     lines = [
         "Synthetic logistics learning document",
@@ -57,6 +58,7 @@ def create_pdf(path: Path) -> None:
 
 
 def main() -> None:
+    """Generate representative TXT, CSV, XLSX, and PDF input documents."""
     OUTPUT.mkdir(parents=True, exist_ok=True)
     (OUTPUT / "warehouse_playbook.txt").write_text(
         "Synthetic logistics learning document.\n"

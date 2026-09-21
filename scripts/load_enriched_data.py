@@ -16,6 +16,7 @@ load_dotenv(ROOT / ".env")
 
 
 def main() -> None:
+    """Replace the SQL Server enriched table with the generated dataset."""
     data_path = ROOT / "data/processed/amazon_like_logistics_dataset.csv"
     if not data_path.is_file():
         raise FileNotFoundError(f"Dataset not found: {data_path}")

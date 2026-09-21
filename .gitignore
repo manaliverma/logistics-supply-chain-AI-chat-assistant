@@ -2,6 +2,7 @@
 .env.example
 data/cache/
 data/processed/
+data/cache/agent_operations.sqlite3
 __pycache__/
 *.py[cod]
 .DS_Store

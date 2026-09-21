@@ -80,11 +80,13 @@ WEATHER_BY_MONTH = {
 
 
 def stable_number(value: str, modulo: int) -> int:
+    """Return a deterministic bounded value for reproducible synthetic fields."""
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
     return int(digest[:12], 16) % modulo
 
 
 def main() -> None:
+    """Generate the enriched synthetic shipment dataset from the raw CSV."""
     if not SOURCE.is_file():
         raise FileNotFoundError(f"Dataset not found: {SOURCE}")
 

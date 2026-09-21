@@ -326,3 +326,430 @@ FROM dbo.TBL_SC_FLEET_HIST_RAW;
 The first query should succeed. The second should fail with a permission
 error. The AI agent must use the curated view and never receive admin
 credentials.
+
+## Implementation phases
+
+The project is built in phases so that operational correctness and governance
+are established before production deployment.
+
+### Phase 0: Local foundation — completed
+
+- Create the Python 3.12 `fde_test` environment.
+- Run SQL Server locally in Docker.
+- Load synthetic logistics telemetry.
+- Keep secrets in `.env` and generated files in ignored directories.
+- Establish repeatable scripts and standard-library unit tests.
+
+### Phase 1: Evidence ingestion — completed
+
+- Parse TXT, Markdown, CSV, spreadsheet, and PDF sources.
+- Cache extracted documents by content hash.
+- Chunk and embed approved SOP documents locally.
+- Store SOP vectors in Pinecone namespace `sop`.
+- Support incremental ingestion, retries, manifests, and stale-vector cleanup.
+
+### Phase 2: Data security — completed
+
+- Create the read-only `USR_FDE_RO` SQL login.
+- Expose only `FDE_VIEWS.VW_ACTIVE_FLEET`.
+- Deny agent access to raw and enriched tables.
+- Use parameterized queries and never pass administrator credentials to the
+  agent.
+
+### Phase 3: Deterministic operational decisions — completed
+
+- Evaluate product-specific temperature and exposure limits.
+- Evaluate reefer power, port congestion, road closures, weather disruption,
+  depot capacity, and high-risk delay conditions.
+- Return severity, reasons, actions, escalation owners, and update intervals.
+- Keep deterministic routing authoritative; the LLM explains but does not
+  override the result.
+
+### Phase 4: Governed agent tools — completed
+
+- Register allowlisted tools for telemetry, SOP retrieval, weather, routes,
+  routing decisions, incidents, approvals, health checks, and audit events.
+- Return structured external API errors without leaking credentials or URLs.
+- Require human approval before rerouting, disposal, hold release, or customer
+  contact.
+- Reject secret-like fields from audit payloads.
+
+### Phase 5: LangGraph orchestration — completed
+
+- Use `create_agent` with the external governed system prompt.
+- Preserve request IDs as LangGraph thread IDs.
+- Use checkpointed conversations with `InMemorySaver` for local learning.
+- Support non-interactive, interactive, and streamed requests.
+- Keep telemetry-first, SOP-backed, deterministic decision flow in the prompt.
+
+### Phase 6: Audit logging and traceability — completed
+
+- Store sanitized append-only development audit events.
+- Correlate lifecycle, tool, incident, approval, and final-response events by
+  request ID.
+- Record request start, completion, failure, cache status, tool activity, and
+  response duration.
+- Provide `scripts/view_agent_log.py` and the Streamlit Audit Log view.
+- Do not store raw prompts, credentials, API keys, or full sensitive records
+  by default.
+
+### Phase 7: Streamlit operator UI — current
+
+- Provide a multi-user dispatch console.
+- Assign each browser session a separate user ID and thread ID.
+- Cache the graph/model once per Streamlit process with `st.cache_resource`.
+- Cache the local embedding/vector store and SQL engine per process.
+- Use a local fast path for greetings without loading the agent.
+- Fall back to uncached graph construction if resource caching fails.
+- Show safe tool traces and audit timelines without exposing secrets.
+
+Known local behavior:
+
+- The first operational request may be slower while Gemini, embeddings, and
+  Pinecone initialize.
+- `torchvision` is not required because the application uses text embeddings.
+- Streamlit's file watcher is disabled to avoid optional Transformers vision
+  import warnings.
+- Current checkpoint state is process-local and is not durable across restarts.
+
+### Phase 8: Reliability and performance hardening — next
+
+- Add explicit provider quota and timeout handling with user-safe messages.
+- Measure tool and model latency from audit events.
+- Add bounded timeouts and controlled retry policies for external providers.
+- Add startup health checks and optional process warm-up.
+- Add integration tests for SQL Server, Pinecone, weather, routing, and the
+  configured LLM provider.
+- Add forecast-aware logic for questions such as “what may be affected in the
+  next hour”; distinguish current observations from forecasts.
+
+### Phase 9: Production persistence and deployment — planned
+
+- Replace `InMemorySaver` with a durable shared LangGraph checkpointer.
+- Replace the local SQLite operations store with an approved durable audit and
+  incident database.
+- Use authenticated users and role-based access to dispatch and audit views.
+- Use separate development, staging, and production credentials.
+- Configure retention, deletion, encryption, monitoring, backups, and alerting.
+- Deploy multiple replicas only after thread state and audit writes are shared
+  and consistent across replicas.
+
+### Phase 10: Operational acceptance — planned
+
+- Validate least-privilege SQL access.
+- Validate incident and approval workflows with operations owners.
+- Test provider failures, quota exhaustion, missing telemetry, conflicting
+  evidence, and stale data.
+- Confirm that every high-risk decision has evidence, deterministic rule
+  output, approval state, and an auditable request timeline.
+- Obtain formal approval before using real customer, shipment, employee,
+  medical, payment, or other sensitive production data.
+
+## Agent tools
+
+`src/agent_tools.py` exposes three deliberately separate tools:
+
+### SOP compliance search
+
+`search_sop_compliance` searches the existing Pinecone SOP index. Pinecone is
+the evidence store; it does not itself decide whether an operation is
+compliant. The tool is needed so the agent can retrieve the relevant policy
+sections for the current question, cite them, and compare them with observed
+telemetry and deterministic routing results. This prevents the model from
+relying on memory or treating vector similarity as an approval.
+
+### Telemetry query
+
+`query_telemetry` uses the `USR_FDE_RO` SQL login and reads only
+`FDE_VIEWS.VW_ACTIVE_FLEET`. It uses a fixed parameterized `SELECT` template,
+so the agent cannot submit arbitrary SQL or reach the raw tables.
+
+### Weather lookup
+
+`get_weather` is an external-data adapter, separate from Pinecone and SQL.
+It uses Open-Meteo by default for local development. Set
+`WEATHER_API_BASE_URL` or replace this adapter when selecting the production
+weather provider. It returns current conditions plus one day of hourly
+temperature, rain, snowfall, wind speed, and wind direction. Weather
+responses are observations and must be combined with the SOP and routing
+rules; they must not override them. Weather alone must not be converted into
+port congestion or road-closure status.
+
+Open-Meteo uses WMO weather codes. The tool adds a readable
+`current.weather_code_description` alongside the numeric
+`current.weather_code`; for example, `61` means slight rain and `95` means
+thunderstorm.
+
+### Free route and transport baseline
+
+`get_route` uses the public OSRM routing API with OpenStreetMap road data.
+It provides a baseline driving route, distance, and estimated duration without
+an API key. It is useful for route geometry and normal travel estimates, but
+it is not a live traffic service and does not guarantee current road-closure
+information.
+
+Therefore:
+
+```text
+OSRM/OpenStreetMap = baseline route and distance
+SQL telemetry      = observed route risk, closures, and congestion fields
+Live traffic API   = optional future production integration
+```
+
+Do not treat an OSRM duration as current congestion. For production live
+traffic, use an approved provider such as a commercial traffic API or a
+regional public transport/road authority feed.
+
+Run the tools from the project environment after configuring `.env`:
+
+```bash
+conda activate fde_test
+python -c "from src.agent_tools import search_sop_compliance, query_telemetry, get_weather; print('agent tools imported')"
+```
+
+The additional governance tools are:
+
+- `evaluate_shipment_routing`: applies deterministic routing rules to the
+  latest telemetry. The model does not decide thresholds.
+- `record_incident`: records a breach without executing an operational action.
+- `get_incident_status`: retrieves incident records for a shipment or incident.
+- `request_human_approval`: creates a pending approval for controlled actions.
+- `health_check_dependencies`: checks SQL Server, Pinecone, and weather access.
+- `write_audit_event`: records sanitized evidence, decisions, and approval
+  metadata. Events include an event ID, timestamp, actor, and optional
+  request ID for correlation. Secret-like fields are rejected recursively.
+- `get_audit_events`: retrieves audit events by request ID or event type for
+  investigation and trace review.
+
+The current development implementation stores incidents, approvals, and audit
+events in the ignored `data/cache/agent_operations.sqlite3` file. Audit events
+are append-only from the tool interface and contain sanitized JSON payloads.
+Use the request ID as the trace key:
+
+```text
+REQ-...  ->  AUD-... incident_detected
+         ->  AUD-... approval_requested
+         ->  AUD-... final_assessment
+```
+
+Production deployment should replace this with an approved durable
+incident/audit database that provides authenticated access, retention,
+immutability, and monitoring.
+
+The orchestrator automatically writes lifecycle events around each request:
+
+```text
+agent_request_started
+agent_request_completed
+agent_request_failed
+```
+
+These events intentionally store metadata such as provider, message counts,
+shipment context, and error type, but not the user's raw question, model
+response, credentials, or full tool payloads. Inspect the local log without
+calling the LLM:
+
+```bash
+conda activate fde_test
+python scripts/view_agent_log.py --limit 20
+python scripts/view_agent_log.py --request-id REQ-... --json
+```
+
+### Agent tool flow
+
+```text
+User request or scheduled monitor
+        |
+        v
+query_telemetry
+        |
+        +--> get_weather (only when current weather is relevant)
+        |
+        +--> search_sop_compliance (retrieve applicable policy evidence)
+        |
+        v
+evaluate_shipment_routing
+        |
+        +--> normal/elevated: explain and write_audit_event
+        |
+        +--> critical: record_incident
+                    |
+                    +--> request_human_approval for reroute, disposal,
+                         hold release, or customer contact
+                    |
+                    +--> get_incident_status for follow-up
+```
+
+The agent may detect, explain, record, and request approval. It must not
+execute rerouting, disposal, hold release, or customer-contact actions itself.
+
+## LangGraph orchestration
+
+`src/orchestrator.py` builds the stateful ReAct workflow. The LLM is the
+reasoner: it chooses which allowlisted tools are needed and in what order.
+The LLM does not replace the deterministic routing engine and cannot bypass
+the tool boundaries.
+
+The governed system instructions are stored in:
+
+```text
+src/prompts/system_prompt.txt
+```
+
+Keeping the prompt separate makes the agent policy and required business
+response format reviewable without changing graph code. The prompt must use
+the registered tool names: `query_telemetry`, `get_weather`, `get_route`, and
+`search_sop_compliance`.
+
+The graph state contains:
+
+```text
+messages    conversation and tool-call history
+request_id  trace identifier used for audit correlation
+shipment_id optional shipment context
+status      graph lifecycle status
+```
+
+Run a request after configuring Gemini:
+
+```bash
+conda activate fde_test
+export LLM_PROVIDER=gemini
+python -m src.orchestrator \
+  --shipment-id US-FC-00032065 \
+  "Is this shipment compliant and what action is required?"
+```
+
+Run an interactive checkpointed dispatcher session:
+
+```bash
+conda activate fde_test
+python -m src.orchestrator interactive --interactive
+```
+
+The interactive mode reads one user question at a time, streams agent updates,
+and reuses one in-memory thread ID until `exit` or `quit`. The system
+instructions are still loaded from `src/prompts/system_prompt.txt` through
+`create_agent`; the prompt is not manually duplicated as a second
+`SystemMessage`.
+
+The default reasoner is Gemini. Configure it in the ignored `.env` file:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-3.6-flash
+```
+
+OpenAI remains an optional provider:
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+The ReAct loop follows this pattern:
+
+```text
+User request
+    ↓
+LangGraph state
+    ↓
+LLM reasoner chooses an allowlisted tool
+    ↓
+Tool result returns to the reasoner
+    ↓
+Reasoner may call another tool
+    ↓
+Final explanation
+```
+
+For a compliance question, the expected tool sequence is typically:
+
+```text
+query_telemetry
+    ↓
+search_sop_compliance
+    ↓
+evaluate_shipment_routing
+    ↓
+record_incident and request_human_approval, if required
+    ↓
+write_audit_event
+```
+
+`get_weather` and `get_route` are conditional tools. They are used only when
+current weather or baseline route information is relevant. The graph does not
+automatically create a production continuous-monitoring loop; a scheduler or
+event consumer would invoke `run_request` or a dedicated monitoring graph.
+
+### Current checkpointing
+
+The agent currently uses a shared in-memory LangGraph checkpointer:
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+```
+
+The `request_id` is passed as the `thread_id`, so repeated requests with the
+same ID can reuse conversation state while the Python process is running.
+`InMemorySaver` is intentionally temporary for learning: all state is lost
+when the process exits. A durable database-backed checkpointer is required
+before deployment across restarts or multiple workers.
+
+### Streamlit UI, model caching, and multi-user behavior
+
+Run the UI with:
+
+```bash
+conda activate fde_test
+streamlit run src/streamlit_app.py
+```
+
+The repository disables Streamlit's file watcher. This avoids noisy optional
+`torchvision` import warnings from Streamlit inspecting the `transformers`
+package. `torchvision` is not required because this agent uses text embeddings
+and does not process images. Restart Streamlit after code changes during local
+development; production deployments should keep the watcher disabled.
+
+The UI uses `st.cache_resource` to build and retain one graph/model instance
+per Streamlit process. This avoids reloading the model on every Streamlit
+rerun. Each browser session receives its own user ID and request/thread ID,
+while the shared LangGraph checkpointer keeps conversations isolated by that
+thread ID.
+
+Greetings such as `hi`, `hello`, and `good morning` use a local fast path and
+do not load Gemini, Pinecone, embeddings, or SQL telemetry. Operational
+questions still use the governed graph and may be slower on the first request
+because the cached graph and local embedding model must initialize. The
+embedding/vector store and SQL engine are cached once per application process,
+so later requests avoid repeated initialization. Response duration is recorded
+in the Streamlit audit event.
+
+If resource caching fails, the UI records the failure and builds an uncached
+graph for that request. If that fallback also fails, the request is surfaced
+as unavailable and the UI remains running; credentials and raw prompts are
+not written to the audit log.
+
+In production, each application process or replica has its own resource cache.
+Use a durable checkpointer and shared audit store for multiple replicas.
+Streamlit session state is user-session state, not durable storage, so it
+cannot replace a database for users, threads, incidents, or audit records.
+
+## Testing before production
+
+Keep the project testable before adding production integrations:
+
+```bash
+conda activate fde_test
+python -m unittest discover -s tests -v
+```
+
+The unit tests mock external APIs and database calls where appropriate. They
+cover routing thresholds, weather and route API failures, input validation,
+incident and approval persistence, audit logging, and secret-field rejection.
+Live Pinecone, SQL Server, weather, and routing checks should be run separately
+as integration checks when those services are intentionally available.
+The orchestrator tests mock the LLM/ReAct agent and verify state initialization,
+request validation, tool registration, and final-message propagation.

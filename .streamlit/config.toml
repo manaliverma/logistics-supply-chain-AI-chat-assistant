@@ -1,0 +1,6 @@
+[server]
+# Disable module introspection that probes optional Transformers vision modules.
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false

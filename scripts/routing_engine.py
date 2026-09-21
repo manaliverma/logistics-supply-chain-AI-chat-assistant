@@ -17,6 +17,7 @@ class RoutingDecision:
     next_update_minutes: int
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize the immutable routing decision for tools and JSON output."""
         return {
             "severity": self.severity,
             "actions": list(self.actions),
@@ -35,6 +36,7 @@ def evaluate_shipment(shipment: pd.Series) -> RoutingDecision:
     next_update = 60
 
     def critical(reason: str, action: str, minutes: int = 15) -> None:
+        """Register a critical trigger and shorten the update interval."""
         nonlocal severity, next_update
         severity = "critical"
         reasons.append(reason)

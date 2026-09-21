@@ -10,6 +10,7 @@ from pinecone import Pinecone
 
 
 def main() -> int:
+    """Validate the Pinecone key and print indexes visible to the account."""
     load_dotenv()
     api_key = os.getenv("PINECONE_API_KEY")
     if not api_key:

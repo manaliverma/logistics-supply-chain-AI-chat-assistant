@@ -16,6 +16,7 @@ load_dotenv(ROOT / ".env")
 
 
 def main() -> None:
+    """Apply each SQL batch using admin credentials from the local environment."""
     password = os.getenv("AGENT_FDE_RO_PASSWORD")
     if not password:
         raise RuntimeError("Missing AGENT_FDE_RO_PASSWORD in .env")
