@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from langchain_core.tools import tool
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
+from src.observability import record_failure, record_metric
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
@@ -74,6 +75,11 @@ def _external_api_error(provider: str, error: Exception) -> dict[str, Any]:
         message = "invalid JSON response"
     else:
         message = type(error).__name__
+    record_failure(error, request_id=ACTIVE_REQUEST_ID.get())
+    record_metric(
+        f"{provider.lower().replace('/', '_').replace(' ', '_')}_failure",
+        request_id=ACTIVE_REQUEST_ID.get(),
+    )
     return {
         "status": "error",
         "provider": provider,
@@ -169,6 +175,7 @@ def _build_agent_database():
 
 
 def _read_telemetry(shipment_id: str | None, limit: int) -> list[dict[str, Any]]:
+    started = datetime.now(timezone.utc)
     statement = text(
         """
         SELECT TOP (:limit)
@@ -188,7 +195,13 @@ def _read_telemetry(shipment_id: str | None, limit: int) -> list[dict[str, Any]]
         rows = connection.execute(
             statement, {"limit": limit, "shipment_id": shipment_id}
         ).mappings()
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+    record_metric(
+        "sql_latency_ms",
+        (datetime.now(timezone.utc) - started).total_seconds() * 1000,
+        request_id=ACTIVE_REQUEST_ID.get(),
+    )
+    return result
 
 
 @tool
@@ -198,8 +211,12 @@ def search_sop_compliance(question: str, result_count: int = 4) -> dict[str, Any
         raise ValueError("question must not be empty")
     if not 1 <= result_count <= 10:
         raise ValueError("result_count must be between 1 and 10")
-    documents = _build_vector_store().similarity_search(
-        question.strip(), k=result_count
+    started = datetime.now(timezone.utc)
+    documents = _build_vector_store().similarity_search(question.strip(), k=result_count)
+    record_metric(
+        "pinecone_latency_ms",
+        (datetime.now(timezone.utc) - started).total_seconds() * 1000,
+        request_id=ACTIVE_REQUEST_ID.get(),
     )
     return {
         "question": question.strip(),
@@ -256,8 +273,14 @@ def get_weather(latitude: float, longitude: float) -> dict[str, Any]:
         headers={"Accept": "application/json", "User-Agent": "logistics-agent/1.0"},
     )
     try:
+        started = datetime.now(timezone.utc)
         with urlopen(request, timeout=10) as response:
             payload = json.load(response)
+        record_metric(
+            "weather_api_latency_ms",
+            (datetime.now(timezone.utc) - started).total_seconds() * 1000,
+            request_id=ACTIVE_REQUEST_ID.get(),
+        )
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
         return _external_api_error("Open-Meteo", error)
     current = payload.get("current", {})
@@ -307,8 +330,14 @@ def get_route(
         headers={"Accept": "application/json", "User-Agent": "logistics-agent/1.0"},
     )
     try:
+        started = datetime.now(timezone.utc)
         with urlopen(request, timeout=10) as response:
             payload = json.load(response)
+        record_metric(
+            "routing_api_latency_ms",
+            (datetime.now(timezone.utc) - started).total_seconds() * 1000,
+            request_id=ACTIVE_REQUEST_ID.get(),
+        )
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
         return _external_api_error("OSRM/OpenStreetMap", error)
     if payload.get("code") != "Ok":
@@ -378,6 +407,7 @@ def record_incident(
             ),
         )
         connection.commit()
+    record_metric("incident_count", request_id=ACTIVE_REQUEST_ID.get())
     return {
         "incident_id": incident_id,
         "shipment_id": shipment_id.strip(),
@@ -439,6 +469,7 @@ def request_human_approval(
             ),
         )
         connection.commit()
+    record_metric("approval_requested", request_id=ACTIVE_REQUEST_ID.get())
     return {"approval_id": approval_id, "incident_id": incident_id, "status": "pending"}
 
 

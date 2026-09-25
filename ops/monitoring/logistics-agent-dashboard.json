@@ -1,0 +1,78 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Requests (last hour)",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "sum(logistics_request_count_total)", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "Success rate (last hour)",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "targets": [{
+        "expr": "100 * sum(logistics_request_success_total) / clamp_min(sum(logistics_request_count_total), 1)",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "percent"}}
+    },
+    {
+      "type": "stat",
+      "title": "Failure rate (last hour)",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [{
+        "expr": "100 * sum(logistics_request_failure_total) / clamp_min(sum(logistics_request_count_total), 1)",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "percent"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Request latency p50 / p90 / p95 (ms)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [
+        {"expr": "logistics_request_latency_ms_quantile{quantile=\"0.5\"}", "legendFormat": "p50", "refId": "A"},
+        {"expr": "logistics_request_latency_ms_quantile{quantile=\"0.9\"}", "legendFormat": "p90", "refId": "B"},
+        {"expr": "logistics_request_latency_ms_quantile{quantile=\"0.95\"}", "legendFormat": "p95", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Dependency latency p50 / p90 / p95 (ms)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {"expr": "logistics_sql_latency_ms_quantile{quantile=\"0.5\"}", "legendFormat": "SQL p50", "refId": "A"},
+        {"expr": "logistics_pinecone_latency_ms_quantile{quantile=\"0.5\"}", "legendFormat": "Pinecone p50", "refId": "B"},
+        {"expr": "logistics_weather_api_latency_ms_quantile{quantile=\"0.5\"}", "legendFormat": "Weather p50", "refId": "C"},
+        {"expr": "logistics_routing_api_latency_ms_quantile{quantile=\"0.5\"}", "legendFormat": "Routing p50", "refId": "D"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Quota and rate-limit failures",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 12},
+      "targets": [
+        {"expr": "logistics_failure_model_quota_failure_total", "legendFormat": "model quota", "refId": "A"},
+        {"expr": "logistics_failure_recoverable_dependency_failure_total", "legendFormat": "dependency/rate-limit", "refId": "B"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Incidents and approval requests",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 12},
+      "targets": [
+        {"expr": "logistics_incident_count_total", "legendFormat": "incidents", "refId": "A"},
+        {"expr": "logistics_approval_requested_total", "legendFormat": "approvals requested", "refId": "B"}
+      ]
+    }
+  ],
+  "schemaVersion": 41,
+  "title": "Logistics Agent - SRE Dashboard",
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "version": 1
+}

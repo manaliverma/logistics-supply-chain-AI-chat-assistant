@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
@@ -33,6 +34,7 @@ from src.agent_tools import (
     search_sop_compliance,
     write_audit_event,
 )
+from src.observability import record_failure, record_metric
 
 ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_PROMPT_PATH = ROOT / "src/prompts/system_prompt.txt"
@@ -147,6 +149,8 @@ def build_graph():
     def reason(state: LogisticsState) -> dict[str, Any]:
         """Run the LLM agent for the current state and store its messages."""
         request_token = ACTIVE_REQUEST_ID.set(state["request_id"])
+        started = datetime.now(timezone.utc)
+        record_metric("request_count", request_id=state["request_id"])
         try:
             _log_agent_event(
                 "agent_request_started",
@@ -162,6 +166,7 @@ def build_graph():
                     config={"configurable": {"thread_id": state["request_id"]}},
                 )
             except Exception as error:
+                record_failure(error, request_id=state["request_id"])
                 _log_agent_event(
                     "agent_request_failed",
                     {"error_type": type(error).__name__},
@@ -174,7 +179,13 @@ def build_graph():
                     "status": "completed",
                 },
             )
+            record_metric("request_success", request_id=state["request_id"])
         finally:
+            record_metric(
+                "model_latency_ms",
+                (datetime.now(timezone.utc) - started).total_seconds() * 1000,
+                request_id=state["request_id"],
+            )
             ACTIVE_REQUEST_ID.reset(request_token)
         return {"messages": result["messages"], "status": "completed"}
 

@@ -412,7 +412,7 @@ Known local behavior:
   import warnings.
 - Current checkpoint state is process-local and is not durable across restarts.
 
-### Phase 8: Reliability and performance hardening — next
+### Phase 8: Reliability and performance hardening — in progress
 
 - Add explicit provider quota and timeout handling with user-safe messages.
 - Measure tool and model latency from audit events.
@@ -422,6 +422,190 @@ Known local behavior:
   configured LLM provider.
 - Add forecast-aware logic for questions such as “what may be affected in the
   next hour”; distinguish current observations from forecasts.
+
+The observability layer now classifies failures as recoverable dependency,
+invalid configuration, missing secret, model quota, or database permission
+failures. It records request success/failure, provider and model latency,
+cache initialization, SQL, Pinecone, weather, routing, incident, approval,
+request latency percentiles, and audit-write metrics in the local development
+operations store. Use `latency_percentiles("request_latency_ms")` for p50/p95.
+Alert evaluation is available through `src.observability.evaluate_alerts`;
+production should export these metrics to CloudWatch, Prometheus, or
+OpenTelemetry and route alerts to the operations team.
+
+### Grafana and CloudWatch dashboarding
+
+Grafana OSS is free to self-host. Grafana Cloud provides a limited free tier,
+but its storage, active-series, retention, and alerting limits depend on the
+current plan. The repository includes a local Prometheus/Grafana stack:
+
+```text
+ops/monitoring/
+    metrics_exporter.py
+    prometheus.yml
+    docker-compose.yml
+    logistics-agent-dashboard.json
+```
+
+The local monitoring data flow is:
+
+```text
+Streamlit/agent process
+    ↓ records metrics
+data/cache/agent_operations.sqlite3
+    ↓ reads and exposes /metrics
+ops/monitoring/metrics_exporter.py
+    ↓ Prometheus scrapes every 15 seconds
+Prometheus
+    ↓ Grafana queries Prometheus
+Grafana dashboard
+```
+
+Start the exporter first:
+
+```bash
+conda activate fde_test
+python ops/monitoring/metrics_exporter.py
+```
+
+Verify it:
+
+```bash
+curl http://localhost:9108/health
+curl http://localhost:9108/metrics
+```
+
+Then start Prometheus and Grafana:
+
+```bash
+docker compose -f ops/monitoring/docker-compose.yml up -d
+```
+
+Open the local services:
+
+```text
+Exporter:  http://localhost:9108/metrics
+Prometheus: http://localhost:9090
+Grafana:    http://localhost:3000
+```
+
+The Docker Compose service is named `prometheus`. Therefore:
+
+- Your Mac browser reaches Grafana at `http://localhost:3000`.
+- Grafana's container reaches Prometheus at `http://prometheus:9090`.
+- Prometheus reaches the host exporter at
+  `http://host.docker.internal:9108/metrics`.
+
+In Grafana, configure the Prometheus data source:
+
+1. Open **Connections → Data sources → Add data source**.
+2. Select **Prometheus**.
+3. Set the URL to `http://prometheus:9090`.
+4. Select **Save & test**.
+5. Import `ops/monitoring/logistics-agent-dashboard.json`.
+6. Select the Prometheus data source when Grafana asks for it.
+
+The dashboard includes:
+
+- Request count and success/failure rate.
+- Request latency p50, p90, and p95.
+- SQL, Pinecone, weather, and routing latency.
+- Model quota and recoverable dependency/rate-limit failures.
+- Incident and approval-request counts.
+
+The dashboard can show `null` when no samples exist for a metric. For example,
+the quota panel remains empty until a quota or rate-limit failure is recorded.
+That is different from a scrape failure. Diagnose an empty panel in this
+order:
+
+```bash
+curl http://localhost:9108/metrics
+curl http://localhost:9090/-/healthy
+curl http://localhost:9090/api/v1/targets
+```
+
+The Prometheus target should show `health: "up"`. If it is up but a panel is
+empty, query the metric directly in Prometheus, for example:
+
+```text
+logistics_request_latency_ms_quantile{quantile="0.5"}
+logistics_failure_model_quota_failure_total
+logistics_request_count_total
+```
+
+The exporter currently reads the local SQLite metrics store for learning.
+Prometheus stores scraped samples, while Grafana only visualizes and queries
+them:
+
+```text
+exporter = translates application metrics
+Prometheus = stores time-series samples
+Grafana = displays dashboards and alerts
+dashboard JSON = defines panels and PromQL queries
+```
+
+Stop the local monitoring stack with:
+
+```bash
+docker compose -f ops/monitoring/docker-compose.yml down
+```
+
+Do not expose the exporter, Prometheus, or Grafana directly to the public
+internet. Use authentication, private networking, TLS, and restricted
+security groups in any shared environment.
+
+For production, replace the local SQLite exporter path with one of:
+
+- CloudWatch custom metrics and CloudWatch alarms for an AWS-first deployment.
+- Amazon Managed Service for Prometheus plus Grafana.
+- Grafana Cloud with Prometheus remote write.
+- OpenTelemetry Collector exporting to the approved metrics backend.
+
+Keep metric names stable when migrating so the dashboard queries remain
+portable. Production should also add alert rules for high model error rate,
+quota exhaustion, SQL/Pinecone failure, audit-write failure, increased p95
+latency, repeated critical incidents, missing approval records, and
+unauthorized access attempts.
+
+CloudWatch is the natural AWS production destination for alarms on quota,
+latency, SQL/Pinecone failures, audit failures, critical incidents, missing
+approvals, and unauthorized access. Grafana can visualize CloudWatch metrics
+through its CloudWatch data source or visualize Prometheus metrics through
+Amazon Managed Service for Prometheus.
+
+### CI/CD separation
+
+CI/CD is intentionally separate from application scripts:
+
+```text
+.github/workflows/ci.yml
+.github/workflows/quality.yml
+```
+
+`ci.yml` installs dependencies, compiles Python, and runs unit tests for pull
+requests and pushes. Live integration tests are opt-in through the repository
+variable `RUN_INTEGRATION_TESTS=true`, because they can access external
+services and consume LLM quota. `quality.yml` provides a manually triggered
+dependency-review job. Future deployment workflows should build and scan the
+container, deploy staging, run health/integration checks, require approval, and
+then deploy production.
+
+Current alert policies cover quota exhaustion, database permission failures,
+repeated dependency failures, and audit-write failures. Production policies
+should additionally alert on high model error rate, p50/p95 latency, repeated
+critical incidents, missing approval records, and unauthorized access.
+
+Opt-in live integration checks are separated from unit tests:
+
+```bash
+RUN_INTEGRATION_TESTS=1 \
+  conda run --no-capture-output -n fde_test \
+  python -m unittest discover -s tests/integration -v
+```
+
+They cover SQL Server curated-view access, Pinecone retrieval, weather,
+routing, audit persistence, and LLM tool calling. Do not run the LLM smoke
+test in routine CI because it consumes provider quota.
 
 ### Phase 9: Production persistence and deployment — planned
 

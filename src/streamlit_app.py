@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from src.agent_tools import get_audit_events, write_audit_event
 from src.orchestrator import build_graph
+from src.observability import evaluate_alerts, record_failure, record_metric
 
 
 st.set_page_config(
@@ -47,13 +48,16 @@ def _audit(event_type: str, payload: dict[str, Any], request_id: str) -> None:
             }
         )
     except Exception as error:
+        record_metric("audit_write_failure", request_id=request_id)
         st.warning(f"Audit logging unavailable: {type(error).__name__}")
 
 
 def _load_graph(request_id: str):
     """Use the process cache, falling back to a normal graph build if needed."""
     try:
+        started = time.perf_counter()
         graph = _cached_graph()
+        record_metric("cache_initialization_ms", (time.perf_counter() - started) * 1000, request_id=request_id)
         _audit("streamlit_graph_cache_ready", {"cache": "hit_or_initialized"}, request_id)
         return graph, "cached"
     except Exception as cache_error:
@@ -67,6 +71,7 @@ def _load_graph(request_id: str):
             _audit("streamlit_graph_fallback_ready", {"cache": "bypassed"}, request_id)
             return graph, "fallback"
         except Exception as load_error:
+            record_failure(load_error, request_id=request_id)
             _audit(
                 "streamlit_graph_load_failed",
                 {"error_type": type(load_error).__name__},
@@ -238,6 +243,7 @@ def main() -> None:
         return
 
     st.session_state.messages.append({"role": "user", "content": question})
+    record_metric("request_count", request_id=st.session_state.thread_id)
     request_started = time.perf_counter()
     _audit(
         "streamlit_user_message",
@@ -252,6 +258,11 @@ def main() -> None:
                     "route risk, SOP compliance, incidents, and approvals."
                 )
                 elapsed_ms = round((time.perf_counter() - request_started) * 1000, 2)
+                record_metric(
+                    "request_latency_ms",
+                    elapsed_ms,
+                    request_id=st.session_state.thread_id,
+                )
                 st.markdown(answer)
                 st.session_state.messages.append(
                     {"role": "assistant", "content": answer, "traces": []}
@@ -286,7 +297,17 @@ def main() -> None:
                 },
                 st.session_state.thread_id,
             )
+            elapsed_ms = round((time.perf_counter() - request_started) * 1000, 2)
+            record_metric("request_latency_ms", elapsed_ms, request_id=st.session_state.thread_id)
+            record_metric("request_success", request_id=st.session_state.thread_id)
+            evaluate_alerts(request_id=st.session_state.thread_id)
         except Exception as error:
+            category = record_failure(error, request_id=st.session_state.thread_id)
+            record_metric(
+                "request_latency_ms",
+                (time.perf_counter() - request_started) * 1000,
+                request_id=st.session_state.thread_id,
+            )
             _audit(
                 "streamlit_request_failed",
                 {
@@ -297,6 +318,13 @@ def main() -> None:
                 },
                 st.session_state.thread_id,
             )
+            record_metric("request_failure", request_id=st.session_state.thread_id)
+            _audit(
+                "streamlit_failure_classified",
+                {"category": category},
+                st.session_state.thread_id,
+            )
+            evaluate_alerts(request_id=st.session_state.thread_id)
             graph_status.caption(f"Graph: {st.session_state.graph_mode}")
             st.error(
                 f"The request could not be completed ({type(error).__name__}). "

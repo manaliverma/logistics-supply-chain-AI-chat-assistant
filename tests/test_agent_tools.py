@@ -6,6 +6,7 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from src import agent_tools
+from src import observability
 
 
 class FakeResponse:
@@ -199,6 +200,46 @@ class AgentToolsTests(unittest.TestCase):
 
         self.assertEqual(result["shipment_id"], "TEST-1")
         self.assertEqual(result["status"], "open")
+
+    def test_failure_classification_and_latency_percentiles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original_db = observability.METRICS_DB
+            observability.METRICS_DB = agent_tools.Path(directory) / "metrics.sqlite3"
+            try:
+                self.assertEqual(
+                    observability.classify_failure(
+                        RuntimeError("RESOURCE_EXHAUSTED quota exceeded")
+                    ),
+                    "model_quota_failure",
+                )
+                for value in (10, 20, 100):
+                    observability.record_metric("request_latency_ms", value)
+                self.assertEqual(
+                    observability.latency_percentiles("request_latency_ms"),
+                    {"p50": 20.0, "p95": 100.0},
+                )
+            finally:
+                observability.METRICS_DB = original_db
+
+    def test_prometheus_export_contains_latency_quantiles(self):
+        from ops.monitoring.metrics_exporter import render_metrics
+
+        with tempfile.TemporaryDirectory() as directory:
+            original_db = observability.METRICS_DB
+            import ops.monitoring.metrics_exporter as exporter
+
+            original_exporter_db = exporter.METRICS_DB
+            try:
+                database = agent_tools.Path(directory) / "metrics.sqlite3"
+                observability.METRICS_DB = database
+                exporter.METRICS_DB = database
+                for value in (10, 20, 100):
+                    observability.record_metric("request_latency_ms", value)
+                output = render_metrics()
+                self.assertIn('logistics_request_latency_ms_quantile{quantile="0.95"} 100.0', output)
+            finally:
+                observability.METRICS_DB = original_db
+                exporter.METRICS_DB = original_exporter_db
 
 
 if __name__ == "__main__":
