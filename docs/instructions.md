@@ -567,6 +567,30 @@ quota exhaustion, SQL/Pinecone failure, audit-write failure, increased p95
 latency, repeated critical incidents, missing approval records, and
 unauthorized access attempts.
 
+The local Grafana stack provisions three learning-stage alert rules:
+
+```text
+logistics-p95-latency
+    p95 request latency > 10,000 ms for 5 minutes
+
+logistics-model-quota
+    any model quota failure in the evaluation window
+
+logistics-audit-write-failure
+    any audit-write failure in the evaluation window
+```
+
+These rules are stored in:
+
+```text
+ops/monitoring/grafana/provisioning/alerting/logistics-agent-rules.yml
+```
+
+They appear in Grafana under **Alerting → Alert rules** after starting or
+recreating the Grafana container. Provisioning creates the rules but does not
+send notifications. Configure a contact point and notification policy in
+Grafana for email, Slack, PagerDuty, or the approved production destination.
+
 CloudWatch is the natural AWS production destination for alarms on quota,
 latency, SQL/Pinecone failures, audit failures, critical incidents, missing
 approvals, and unauthorized access. Grafana can visualize CloudWatch metrics

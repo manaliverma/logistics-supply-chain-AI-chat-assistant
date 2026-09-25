@@ -17,6 +17,19 @@ Start Prometheus and Grafana in another terminal:
 docker compose -f ops/monitoring/docker-compose.yml up -d
 ```
 
+The Compose configuration provisions the Prometheus data source and three
+Grafana alert rules automatically:
+
+- p95 request latency above 10 seconds for 5 minutes
+- any model quota failure
+- any audit-write failure
+
+After changing provisioning files, recreate the Grafana container:
+
+```bash
+docker compose -f ops/monitoring/docker-compose.yml up -d --force-recreate grafana
+```
+
 Open:
 
 - Prometheus: http://localhost:9090
@@ -39,6 +52,10 @@ http://prometheus:9090
 Import `logistics-agent-dashboard.json`. The dashboard includes request
 success/failure, p50/p90/p95 request latency, dependency latency, model quota
 and dependency failures, incidents, and approval requests.
+
+View active rules in Grafana under **Alerting → Alert rules**. Provisioned rules
+evaluate Prometheus data; they do not send email or Slack until a contact
+point and notification policy are configured.
 
 The exporter reads the local development SQLite metrics store. Production
 should replace it with a durable metrics backend or emit metrics directly
